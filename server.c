@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <aprap/inet.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include <apra/inet.h>
+#include <sys/socket.h>
+
 
 // Synbolic Constants
 #define PORT 8080
@@ -13,7 +13,64 @@
 #define BUFFER_SIZE 1024
 #define LOG_FILE "server.log"
 
-FILE *log_file;
+// Force 1-byte alignemt
+#pragma pack(push, 1)
+typedef struct 
+{
+    uint16_t srcPort; // Source Port
+    uint16_t destPort; // Dest Port
+    uint32_t seqNum; // Seequence Number
+    uint8_t ackFlag; // ACK Flag
+    uint8_t synFlag; // SYN Flag
+    uint8_t finFlag;
+    uint16_t plSIZE; // Payload Size
+} CustomHeader;
+#pragma pack(pop)
+
+// Sybolic Constants 
+#define HEADER_SIZE sizeof(CustomHeader)
+FILE *log_file; 
+
+ssize_t recv_all(int sock, char *buffer, size_t len)
+{
+    size_t total = 0;
+    
+    while(total < len)
+    {
+        ssize_t bytes = recv(sock, buffer + total, len - total, 0);
+
+        if(bytes <= 0)
+        {
+            return bytes;
+        }
+
+        total += bytes;
+    }
+
+    return total;
+}
+
+const char* get_response(const CustomHeader * header, char *response, size_t bufsize)
+{
+    if(header->synFlag == 1)
+    {
+        snprintf(response, bufsize, "SYN received - connection was initiated");
+    }
+    else if (header->ackFlag == 1)
+    {
+        snprintf(response, bufsize, "ACK received - message was acknowledged");
+    }
+    else if(header->finFlag == 1)
+    {
+        snprintf(response, bufsize, "FIN received - connection is closing");
+    }
+    else
+    {
+        snprintf(response, bufsize, "Data received - payload length: %u", header->plSIZE);
+    }
+    
+    return response; 
+}
 
 // Function to log messages to a file
 /*
@@ -31,142 +88,23 @@ void log_message(const char *mess)
     }
 }
 
-// Function to start openssl
-/*
-    OpenSSL proceeds crytopgraphic functionality
-    and secures socket layer protocols
-*/
-void start_openssl()
-{
-    SSL_load_erro_strings();
-    OpenSSl_add_ssl_algorithms();
-}
-
-// Functions that cleans up openssl
-/*
-    This will ensure that the resources
-    used by the library are properly relased
-*/
-void clean_openssl()
-{
-    EVP_cleanup();
-}
-
-// Function that creates the ssl
-/*
-    SSL is a cryptopgraphic protocol that provides 
-    secure communication over the internet by 
-    encrypting data between a client and server
-*/
-SSL_CTX *create()
-{
-    const SSL_METHOD *m;
-    SSL_CTX *ctx;
-
-    m = TLS_server_method();
-    ctx = SSL_CTX_new(m);
-
-    if(!ctx)
-    {
-        log_message("Failed to create the SSL context");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    return ctx;
-}
-
-// Function that configures SSL
-/*
-    Loads a SSL certificate from a specified file.
-    Loads the corresponding private key.
-    Verifies that the private key matches the certificate
-*/
-void configgure(SSL_CTX *ctx)
-{
-    // Load the SSL certificate from file
-    if(SSL_CTX_use_certificate_file(ctx, "ssl_certs/server.crt", SSL_FILETYYPE_PEM) <= 0)
-    {
-        log_message("Unable to load the certificate file");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    // Load the private key from the file
-    if(SSL_CTX_use_PrivateKey_file(ctx, "ssl_certs/server.key", SSL_FILETYPE_PEM) <= 0)
-    {
-        log_message("Unable to load the private key file");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    // Verify that the loaded private key matches the loaded certificate
-    if(!SSL_CTX_check_private_key(ctx))
-    {
-        log_message("Private key does not match the public certificate");
-        exit(EXIT_FAILURE)
-    }
-}
-
-// Function that handles the client communication
-/*
-    Handles receiving a message from the client, logging 
-    the recieved message and sending a confirmation message 
-    back to the client 
-*/
-void *client(void *sl)
-{
-    // Varibles
-    SSL *new_sl = (SSL *)sl;
-    char size[BUFFER_SIZE];
-    int byte;
-
-    // Reveices message from client
-    byte = SSL_read(new_sl, size, sizeof(size));
-
-    // Check if the read operation worked
-    if(byte <= 0)
-    {
-        log_message("SSL read has failed");
-        ERR_print_eeros_fp(stderr);
-    }
-    else
-    {
-        size[byte] = '\0';
-        log_message(size);
-        printf("Received: %s\n", size);
-
-        // Sends confirmation
-        SSL_write(new_sl, "message received!", strlen("Message received!"));
-    }
-
-    SSL_shutdown(new_sl);
-    SSL_free(new_sl);
-}
-
 int main()
 {
     // Variables
-    int sock, cl_sock;
-    struct sockaddr_in add, cl_add;
-    socklen_t cl_len = sizeof(cl_add);
-    SSL_CTX *ctx;
-    SSL *sl;
-
-    //Launches OpenSSL
-    start_openssl();
-    ctx = create();
-    configure(ctx);
-
-    // Creates teh socket
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    int sock, cl_sock, size;
+    struct sockaddr_in add;
+    socklen_t cl_len = sizeof(add);
+    char logBuff[BUFFER_SIZE];
 
     // Checks to see if the creation of the socket worked
-    if(sock < 0)
+    if((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1)
     {
-        perror("Socket creation has failed");
+        perror("socket");
         exit(EXIT_FAILURE);
     }
+
+    size = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &size, sizeof(size));
 
     // sockaddr_in fields
     add.sin_family = AF_INET;
@@ -174,7 +112,7 @@ int main()
     add.sin_port = htons(PORT);
 
     // Binds the socket
-    if(bind(sock, (struct sockadd*)&add, sizeof(add)) < 0)
+    if(bind(sock, (struct sockaddr*)&add, sizeof(add)) < 0)
     {
         perror("The bind has failed");
         close(sock);
@@ -192,43 +130,84 @@ int main()
     printf("Server is listening on port %d...\n", PORT);
     log_message("Server has started");
 
+    if((cl_sock = accept(sock, (struct sockaddr *)&add, &cl_len)) < 0)
+    {
+        perror("accept");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+
+    snprintf(logBuff, sizeof(logBuff), "Client connected: %s", inet_ntoa(add.sin_addr));
+    log_message(logBuff);
+
     // This accpects incoming connnections 
     while(1)
     {
-        cl_sock = accept(sock, (struct sockaddr*)&cl_add, &cl_len);
+       CustomHeader header;
+        ssize_t r = recv_all(cl_sock, (char *)&header, HEADER_SIZE);
 
-        // Checks if cl_sock failed
-        if(cl_sock < 0)
+        if(r <= 0)
         {
-            perror("Accpeting has failed");
-            continue;
+            log_message("Client was disconnected or there was an error in receiving header.");
+            break;
         }
 
-        // Creates SSL object
-        sl = SSL_new(ctx);
-        SSL_st_fd(sl, cl_sock);
+        header.srcPort = ntohs(header.srcPort);
+        header.destPort = ntohs(header.destPort);
+        header.seqNum = ntohl(header.seqNum);
+        header.plSIZE = ntohs(header.plSIZE);
 
-        // Preforms SSL Handshake
-        /*
-            This is the process of establishing a secure,
-            encrypted connection between client and server
-        */
-       if(SSL_accept(s1) <= 0)
-       {
-            log_message("SSL handshake has failed");
-            ERR_print_errors_fp(stderr);
-            SSL_free(sl);
-            close(cl_sock);
-            continue;
-       }
+        snprintf(logBuff, sizeof(logBuff), "Recieved Header\n Source Port: %u\n Dest Port: %u\n Sequence No: %u\n ACk: %d SYN: %d FIN: %d\n Payload Size: %u", header.srcPort, header.destPort, header.seqNum, header.ackFlag, header.synFlag, header.finFlag, header.plSIZE);
+        log_message(logBuff);
 
-       log_message("Client is connected");
+        if(header.plSIZE > 0)
+        {
+            char *load = malloc(header.plSIZE + 1);
+
+            if(!load)
+            {
+                log_message("Memory allocation has failed for the payload");
+                break;
+            }
+
+            r = recv_all(cl_sock, load, header.plSIZE);
+
+            if(r <= 0)
+            {
+                free(load);
+                log_message("There was an error when receiving payload or the client disconnected");
+                break;
+            }
+
+            load[header.plSIZE] = '\0';
+            snprintf(logBuff, sizeof(logBuff), "Client says:\n%s", load);
+            log_message(logBuff);
+            free(load);
+        }
+
+        char response[BUFFER_SIZE];
+        get_response(&header, response, sizeof(response));
+
+        if(send(cl_sock, response, strlen(response), 0) == -1)
+        {
+            perror("Send");
+            break;
+        }
+
+        snprintf(logBuff, sizeof(logBuff), "Sent response: %s", response);
+        log_message(logBuff);
+
+        if(header.finFlag == 1)
+        {
+            log_message("Fin flag has been received. Closing the connection.");
+            break;
+        }
     }
 
     // Clean up
+    close(cl_sock);
     close(sock);
-    SSL_CTX_free(ctx);
-    clean_oenssl();
+    log_message("Server has shut down.");
 
     return 0;
 }

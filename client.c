@@ -4,88 +4,48 @@
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include <sys/socket.h>
 
 // Symbolic Constants
 #define SERVER_IP "127.0.0.1"
 #define PORT 8080
 #define BUFFER_SIZE 1024
 
-// Fucntion to start openssl
-/*
-    OpenSSl proceeds crytopgraphic functionality
-    and secures socket layer protocols
-*/
-void start_openssl()
+#pragma pack(push, 1)
+typedef struct
 {
-    SSL_load_error_strings();
-    OpenSSL_add_ssl_algorithms();
-}
+    uint16_t srcPort;
+    uint16_t destPort;
+    uint32_t seqNum;
+    uint8_t ackFlag;
+    uint8_t synFlag;
+    uint8_t finFlag;
+    uint16_t plSIZE;
+} CustomHeader;
+#pragma pack(pop)
 
-// Function that cleans up openssl
-/*
-    This will ensure that the resources
-    used by the library are properly released
-*/
-void clean_openssl()
+const int HEADER_SIZE = sizeof(CustomHeader);
+
+int get_val_flag(const char *name)
 {
-    EVP_cleanup();
-}
+    int val;
 
-// Functions that creates teh ssl
-/*
-    SSL is a cryptographic protocol that provides
-    secure communication over the internet by 
-    encrypting data between a client and server  
-*/
-SSL_CTX *create()
-{
-    const SSL_METHOD *m;
-    SSL_CTX *ctx;
-
-    m = TLS_client_method();
-    ctx = SSL_CTX_new(m);
-
-    if(!ctx)
+    while(1)
     {
-        perror("Not able to create SSL");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+        printf("Enter %s (0 or 1): ", name);
+
+        if(scanf("%d", &val) == 1 && (val == 0 || val == 1))
+        {
+            break;
+        }
+        else
+        {
+            printf("Invalid input. %s must be 0 or 1.\n", name);
+            while(getchar() != '\n');
+        }
     }
 
-    return ctx;
-}
-
-// Function that communicates with server
-/*
-    Handles user input, sends it to the server via SSL
-    and waits for and prints the server's response
-*/
-void communicate_server(SSL *sl)
-{
-    char size[BUFFER_SIZE];
-
-    // This gets user's input
-    printf("Enter message: ");
-    fgets(size, seizeof(size), stdin);
-
-    // This sends the message to server
-    SSL_write(sl, sizeof(size), stdin);
-
-    // Reads the server's response
-    int byte = SSl_read(sl, size, sizeof(size));
-
-    // Checks if SSL_read fialed
-    if(byte <= 0)
-    {
-        perror("SSL read has failed");
-    }
-    else
-    {
-        size[byte] = '\0'
-        printf("Server response: %s\n", size);
-    }
+    return val;
 }
 
 int main()
@@ -93,18 +53,9 @@ int main()
     // Varibales
     int sock;
     struct sockaddr_in add;
-    SSL_CTX *ctx;
-    SSL *sl;
-
-    // Launches OpenSSL
-    start_openssl();
-    ctx = create();
-
-    // Creates the socket
-    sock = socket(AF_INET, SOCK_STREAM, 0);
 
     // Checks to see if the creation of socket worked
-    if(sock < 0)
+    if((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror("Socket creation has failed");
         exit(EXIT_FAILURE);
@@ -113,37 +64,88 @@ int main()
     // sockadd_in fields
     add.sin_family = AF_INET;
     add.sin_port = htons(PORT);
-    add.sin-add.s_addr = inet_addr(SERVER_IP);
 
-    // Checks connection to the server
-    if(connect(sock, (struct sockadd*)&add, sizeof(add)) < 0)
+    if(inet_pton(AF_INET, SERVER_IP, &add.sin_addr) <= 0)
     {
-        perror("Connection has failed");
+        perror("Invalid address");
+        close(sock);
         exit(EXIT_FAILURE);
     }
 
-    // Creates SSL object
-    sl = SSL_new(ctx);
-    SSL_set_fd(sl, sock);
+    // Checks connection to the server
+    if(connect(sock, (struct sockaddr*)&add, sizeof(add)) < 0)
+    {
+        perror("Connection has failed");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
 
-    // Preforms SSl Handshake
-    /*
-        This the process of establishing a secure,
-        encrypted connection between client and server
-    */
-   if(SSL_connect(s1) < 0)
-   {
-        perror("SSL handshake ahs failed");
-   }
-   else
-   {
-        communicate_server(sl);
-   }
+    printf("Connected to server %s:%d\n", SERVER_IP, SERVER_IP, SERVER_PORT);
 
+    uint16_t srcPort = 8000;
+    uint16_t destPort = PORT;
+    uint32_t seqNum = 1;
+
+    int ackFlag = get_val_flag("ACK flag");
+    int synFlag = get_val_flag("SYN flag");
+    int finFlag = get_val_flag("FIN flag");
+
+    char load[BUFFER_SIZE];
+    printf("Enter a message for server: ");
+    getchar();
+    fgets(load, sizeof(load), stdin);
+    load[strcspn(load, "\n")] = '\0';
+
+    uint16_t plSIZE = strlen(load);
+
+    CustomHeader header;
+    header.srcPort = htons(srcPort);
+    header.destPort = htons(destPort);
+    header.seqNum = htonl(seqNum);
+    header.ackFlag = ackFlag;
+    header.synFlag = synFlag;
+    header.finFlag = finFlag;
+    header.plSIZE = htons(plSIZE);
+
+    char *pack = malloc(HEADER_SIZE + plSIZE);
+    
+    if(!pack)
+    {
+        perror("Memory allocation has failed");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+
+    memcpy(pack, &header, HEADER_SIZE);
+    memcpy(pack + HEADER_SIZE, load, plSIZE);
+
+    ssize_t total = HEADER_SIZE + plSIZE;
+
+    if(send(sock, pack, total, 0) != total)
+    {
+        perror("Send has failed");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Sent message to server.\n");
+    free(pack);
+
+    char response[BUFFER_SIZE] = {0};
+    ssize_t r = recv(sock, response, sizeof(response) - 1, 0);
+
+    if(r > 0)
+    {
+        response[r] = '\0';
+        printf("Server says: %s\n", response);
+    }
+    else
+    {
+        printf("No response or error.\n");
+    }
+    
    // Clean up
    close(sock);
-   SSL_free(sl);
-   clean_openssl();
 
    return 0; 
 }
