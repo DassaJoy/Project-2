@@ -1,12 +1,12 @@
-.PHONEY: all clean
+.PHONY: all clean
 
 all: server client
 
-server: server.cpp
-	@g+ -std=c++11 -o server server.cpp
+server: server.c
+	@gcc -std=c11 -o server server.c
 
-client: clien.cpp
-	@g++ -std=c++ -o client client.cpp
+client: client.c
+	@gcc -std=c11 -o client client.c
 
 clean:
 	@rm -f server client

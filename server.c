@@ -1,36 +1,40 @@
-// ALL Libraries
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <apra/inet.h>
-#include <sys/socket.h>
+// All Libraries
+#include <stdio.h> // Provides functions for input or output operations. Also used for logging. 
+#include <unistd.h> // Gives access to system calls.
+#include <stdlib.h> // Includes dynamic memory functions. This is essential for handling memory allocation.
+#include <stdint.h>  // Defines types of uint8_t, uint16_t, and uint32_t which ensures specific bit sizes for cross platforms. Important to ake sure data sizes match exactly between systems.
+#include <string.h> // Provides fuctions for handling strings and memory blocks.
+#include <arpa/inet.h> // Includes fucntions to convert between IP address formats.
+#include <sys/socket.h> // Contains the functions and structures needed for sockets.
 
+// Symbolic Constants
+#define PORT 8080 // Port number the server is listening on
+#define MAX_CLIENTS 1 // Number of clients the server is able to have. 
+#define BUFFER_SIZE 1024 // Buffer size for message data
+#define LOG_FILE "server.log" // Log file name used to store server-side events and messages.
 
-// Synbolic Constants
-#define PORT 8080
-#define MAX_CLIENTS 1
-#define BUFFER_SIZE 1024
-#define LOG_FILE "server.log"
-
-// Force 1-byte alignemt
+// Ensures no padding is added between fields of the struct.
 #pragma pack(push, 1)
 typedef struct 
 {
-    uint16_t srcPort; // Source Port
-    uint16_t destPort; // Dest Port
-    uint32_t seqNum; // Seequence Number
-    uint8_t ackFlag; // ACK Flag
-    uint8_t synFlag; // SYN Flag
-    uint8_t finFlag;
-    uint16_t plSIZE; // Payload Size
+    uint16_t srcPort; // Source Port of the client
+    uint16_t destPort; // Destination Port 
+    uint32_t seqNum; // Sequence Number (for tracking message order)
+    uint8_t ackFlag; // Acknowledgment Flag (1 if ACK, 0 if not)
+    uint8_t synFlag; // Synchronization Flag (used to initiate connection)
+    uint8_t finFlag; // Finish Flag (used to close the connection)
+    uint16_t plSIZE; // Size of the payload (in bytes)
 } CustomHeader;
 #pragma pack(pop)
 
-// Sybolic Constants 
-#define HEADER_SIZE sizeof(CustomHeader)
-FILE *log_file; 
+// Symbolic Constants 
+#define HEADER_SIZE sizeof(CustomHeader) // The total size of the header in bytes.
+FILE *log_file; // File pointer used to handle log writing
 
+/*
+    Reads 'len' bytes form the socket into the buffer. 
+    The function loops until all requested bytes are received or an error or disconnection occurs.
+*/
 ssize_t recv_all(int sock, char *buffer, size_t len)
 {
     size_t total = 0;
@@ -41,7 +45,7 @@ ssize_t recv_all(int sock, char *buffer, size_t len)
 
         if(bytes <= 0)
         {
-            return bytes;
+            return bytes; // Error or disconnection
         }
 
         total += bytes;
@@ -50,6 +54,10 @@ ssize_t recv_all(int sock, char *buffer, size_t len)
     return total;
 }
 
+/*
+    Generates a server side response based on flags in the custom header. 
+    Returns a essage string appropriate to the type of request or flag. 
+*/
 const char* get_response(const CustomHeader * header, char *response, size_t bufsize)
 {
     if(header->synFlag == 1)
@@ -103,6 +111,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    // Allows the port to be reused immediately after the server is restarted
     size = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &size, sizeof(size));
 
@@ -130,6 +139,7 @@ int main()
     printf("Server is listening on port %d...\n", PORT);
     log_message("Server has started");
 
+    // Accept a client connection
     if((cl_sock = accept(sock, (struct sockaddr *)&add, &cl_len)) < 0)
     {
         perror("accept");
@@ -152,19 +162,22 @@ int main()
             break;
         }
 
+        // convert fields from network to host byte order
         header.srcPort = ntohs(header.srcPort);
         header.destPort = ntohs(header.destPort);
         header.seqNum = ntohl(header.seqNum);
         header.plSIZE = ntohs(header.plSIZE);
 
+        // Log header info
         snprintf(logBuff, sizeof(logBuff), "Recieved Header\n Source Port: %u\n Dest Port: %u\n Sequence No: %u\n ACk: %d SYN: %d FIN: %d\n Payload Size: %u", header.srcPort, header.destPort, header.seqNum, header.ackFlag, header.synFlag, header.finFlag, header.plSIZE);
         log_message(logBuff);
 
+        // If payload is expected, receive it 
         if(header.plSIZE > 0)
         {
-            char *load = malloc(header.plSIZE + 1);
+            char *load = malloc(header.plSIZE + 1); // +1 for null terminator
 
-            if(!load)
+            if(load == NULL)
             {
                 log_message("Memory allocation has failed for the payload");
                 break;
@@ -179,12 +192,13 @@ int main()
                 break;
             }
 
-            load[header.plSIZE] = '\0';
+            load[header.plSIZE] = '\0'; // Null terminate the payload string
             snprintf(logBuff, sizeof(logBuff), "Client says:\n%s", load);
             log_message(logBuff);
             free(load);
         }
 
+        // Prepare and send a response message
         char response[BUFFER_SIZE];
         get_response(&header, response, sizeof(response));
 
@@ -197,6 +211,7 @@ int main()
         snprintf(logBuff, sizeof(logBuff), "Sent response: %s", response);
         log_message(logBuff);
 
+        // Check if client wants to erminate the connection
         if(header.finFlag == 1)
         {
             log_message("Fin flag has been received. Closing the connection.");
