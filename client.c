@@ -141,7 +141,7 @@ int main()
     // Sends the complete packet to the server
     ssize_t total = HEADER_SIZE + plSIZE;
 
-    if(send_all(sock, pack, total, 0) != total)
+    if(send(sock, pack, total, 0) != total)
     {
         perror("Send has failed");
         close(sock);
