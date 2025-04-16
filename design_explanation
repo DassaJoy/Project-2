@@ -1,0 +1,98 @@
+Format and Structure of the Custom Header
+  The custom header used in this project is a structured format that simulates essential components of a TCP header. It is defined using a C struct and is designed to be compact, precise, and cross-platform compatible. The structure includes fields for the source port and destination port. Both are stored as 16-bit unsigned integers. These ports identify where the message originated and where it is intended to go. A 32-bit sequence number is also included to track the order of messages during communication. The header contains three control flags (ACK, SYN, FIN) that are stored as 8-bit unsigned integers. These flags are used to manage connection control. The header also includes a 16-bit unsigned integer indicating the size of the payload that follows the header. To ensure that the header is transmitted without any compiler-added padding, it is wrapped with a #pragma pack(push, 1) directive. This prevents the compiler from inserting padding between fields. It also guarantees that the layout of the data is tightly packed and consistent across different systems. Before transmission, all multi-byte fields are converted to network byte order, and upon receipt, they are converted back to host byte order.
+
+Parsing and Response Logic
+  Once a connection has been established with the client, the server will begin reading the incoming messages by first receiving the fixed-size CustomHeader using a helper function called recv_all. This ensures all bytes of the header are read before continuing. After the header is received, the server converts multi-byte fields from network byte order to host byte order using ntohs() for 16-bit values and ntohl() for 32-bit values. These are important for consistent interpretation across different system architectures. If the header indicates that a payload is included (plSIZE > 0), the server allocates memory to receive the payload. This ensures that it is properly null-terminated and logs its content. Based on the values of the control flags (ACK, SYN, FIN), the server generates a human-readable response using the get_response() function and sends it back to the client. All actions are logged in a file (server.log), including client connections, received data, responses sent, and connection terminations. If a message contains the FIN flag, the server interprets it as a termination request and cleanly shuts down the connection. 
+
+Reasoning for any error-handling or decisions
+    Client Error Handing
+    1. Socket Creation 
+        Error-handling: If the socket creation fails (socket() returns -1), an error   
+        message is printed using perror(), and the client exits with exit(EXIT_FAILURE)
+        Reasoning: If the socket cannot be created, there's no way to establish a     
+        communcation channel, and it is better to terminate the client program than to 
+        contiune in a non-function state.
+    2. Server Connection Failure
+        Error-handling: If the connect() function fails, the program prints an error 
+        message and exits.
+        Reasoning: If the connection cannot be established, the client has no way to 
+        send data to the server, so there is no point in continuing to run the program.
+    3. User Input Validation
+        Error-handling: The client allows the user to inpput values for the control 
+        flags.
+        Reasoning: The flgas are processed as boolean values (0 or 1) and the assumption 
+        is that the user will provide correct values. 
+    4. Memory Allocation for Payload
+        Error-handling: When allocating memory for the payload, the client checks if 
+        malloc() returns NULL. If so, an error message is logged, and the program exits.
+        Reasoning: If memory allocation fails, continuing the program could result in 
+        undefined behavior or crashes. It's better to exit gracefully to avoid further 
+        errors or resource corruption.
+    5. Send Operation
+        Error-handling: The client checks if send() returns -1 (indicating failure). If  
+        an error occurs during sending, the program prints an error message and exits.
+        Reasoning: If the data cannot be sent, there's no point in continuing 
+        communication, and the program should clean up resources and exit.
+    6. Response Handling
+        Error-handling: The client expects a response from the server. If the response 
+        is not received or there is an error during recv(), the program prints an error 
+        message and terminates.
+        Reasoning: If the client doesn't receive a response from the server, it's likely 
+        due to a network issue or a server crash. Continuing without the expected 
+        response would lead to incorrect behavior.
+
+    Server Error Handling
+    1. Socket Creation
+        Error-handling: If socket() fails, the program prints an error message and exits 
+        with exit(EXIT_FAILURE).
+        Reasoning: Without a valid socket, the server cannot accept incoming 
+        connections, so the program needs to terminate gracefully.
+    2. Binding the Socket
+        Error-handling: If the bind() call fails, an error message is printed, and the 
+        program exits.
+        Reasoning: Binding the socket to a port is essential for the server to receive 
+        incoming connections. If binding fails, the server cannot function and should 
+        terminate.
+    3. Listening for Connections
+        Error-handling: If listen() fails, the program prints an error message and exits.
+        Reasoning: If the server cannot listen for connections, there’s no way to accept 
+        any client requests. The server must terminate if it can't establish this 
+        essential functionality.
+    4. Accepting client Connections
+        Error-handling: If accept() fails, the server prints an error message and exits.
+        Reasoning: If the server cannot accept connections, it cannot communicate with 
+        clients. Therefore, the server exits because continuing without the ability to 
+        accept connections would be futile.
+    5. Receiving Data
+        Error-handling: The server uses the recv_all() helper function to ensure that it 
+        reads the entire header. If the number of bytes read is less than expected (or 
+        recv() fails), the server logs an error message and closes the connection.
+        Reasoning: It is critical to ensure that the full header is received before 
+        parsing. If part of the header is lost or not received, the server cannot 
+        accurately interpret the message, so terminating the connection is safer than 
+        proceeding with incomplete data.
+    6. Memory Allocation for Payload:
+        Error-handling: When allocating memory for the payload (malloc()), the server 
+        checks if the allocation was successful. If not, it logs an error and terminates.
+        Reasoning: Memory allocation is critical for storing the payload. If the server 
+        cannot allocate the required memory, it could lead to crashes or memory 
+        corruption. 
+    7. Payload Handling
+        Error-handling: The server checks if the received payload size is greater than 0 
+        before attempting to receive the payload. If an error occurs during this 
+        operation, it logs an error and terminates.
+        Reasoning: If the payload size is 0 or if an error occurs while reading the 
+        payload, the server cannot process the message. The server should terminate the 
+        connection and log the error to maintain system integrity.
+    8. Sending Response
+        Error-handling: If send() fails (returns -1), the server logs the error and 
+        terminates the connection.
+        Reasoning: If the server cannot send a response, it means there is a network 
+        issue or a failure in the communication channel.
+    9. Connection Termination
+        Error-handling: When a FIN flag is received, the server logs the termination and 
+        breaks out of the loop to close the connection.
+        Reasoning: The FIN flag indicates the end of the communication session, and the 
+        server should handle this by cleanly shutting down the connection. Not handling 
+        this could leave the connection open and lead to resource leakage.
+    
